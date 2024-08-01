@@ -19,12 +19,30 @@ app = Flask(__name__)
 def status():
     return jsonify({'status': 'live'})
 
+rpc = "https://devnet-rpc.shyft.to?api_key=rhs08NSIIkMOxwld" # Devnet RPC
+client = Client(rpc)
+payer = Keypair()
+mpg = "BRWNCEzQTm8kvEXHsVVY9jpb1VLbpv9B8mkF43nMLCtu" # Stakechip Devnet MPG Key
+market_product_group_key = Pubkey.from_string(mpg)
+
+ctx = SDKContext.connect(client, payer, market_product_group_key, raise_on_error=True)
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     """
     Recieves transaction data, parses it, proccess it and then sends it to the trade api to get executed
     """
-
+    data = request.get_json()
+    data = data[0]
+    if data.get("meta", {}).get("err") is not None:
+        return jsonify({'error': "Transaction failed"}), 400
+    
+    try:
+        handle_transaction(data)
+        return jsonify({"message": "Transaction processed"}), 200
+    except Exception as e:
+        print(f"Exception during transaction processing: {e}")
+        return jsonify({'error': "Transaction failed to process"}), 500
 
 def handle_transaction(tr: Dict[str, Any]):
     """
@@ -32,14 +50,44 @@ def handle_transaction(tr: Dict[str, Any]):
     
     :param tr: A dictionary representing the transaction.
     """
+    events = ctx.parse_events_from_logs(tr.get("meta", {}).get("logMessages", []))
+    fill_events = [event for event in events if isinstance(event, OrderFillEvent)]
 
-def event_to_trade_data(event: OrderFillEvent) -> Dict[str, Any]:
+    if fill_events:
+        parsed_trades = [event_to_trade_data(
+            # tr, 
+            event
+        ) for event in fill_events]
+
+        try:
+            for trade in parsed_trades:
+                print(trade)
+            print(f"Sent {len(parsed_trades)} trade events.")
+        except Exception as e:
+            print(f"Failed to send fill events due to error: {e}")
+    else:
+        print("No fill events found in transaction.")
+
+def event_to_trade_data(
+    # tr: Dict[str, Any], 
+    event: OrderFillEvent
+) -> Dict[str, Any]:
     """
     Parses an OrderFillEvent into a Trade Object.
     
     :param event: The OrderFillEvent instance.
     :return: A Trade Object representing the fill event to send to the Trading API for execution.
     """
+    return {
+        "product": event.product,
+        "side": event.taker_side,
+        "price": event.price,
+        "quantity": event.quote_size,
+        "base_size": event.base_size,
+        "maker": event.maker_trader_risk_group,
+        "taker": event.taker_trader_risk_group,
+        "orderType": "LIMIT",
+    }
 
 def proccess_trade(trade):
    url = os.environ.get('TRADING_API_URL', 'http://localhost:3000') + '/process-trade'
@@ -57,4 +105,8 @@ def proccess_trade(trade):
        print(f"An error occurred: {e}")
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port="80")
+    app.run(
+        debug=True, 
+        # host='0.0.0.0', port="80"
+        host='localhost', port="1025"
+    )
