@@ -8,10 +8,10 @@ from solders.pubkey import Pubkey
 from solana.rpc.api import Client
 import requests
 import json
-from dotenv import load_dotenv
+# from dotenv import load_dotenv
 
 # Load the .env file
-load_dotenv()
+# load_dotenv()
 
 app = Flask(__name__)
 
